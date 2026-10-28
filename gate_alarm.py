@@ -1,6 +1,6 @@
 import os, json, time, statistics, requests
 
-T, MAX_SP, SIZE, GAP, QUIET, MIN_EX = 5.0, 40.0, 100.0, 30, 6 * 3600, 5
+T, MAX_SP, SIZE, GAP, QUIET, MIN_EX = 5.0, 40.0, 100.0, 30, 300, 5
 NET_MIN, FEE, MAX_ROWS = 3.0, 0.001, 15
 SHOW_PAHALI = False
 UA = {"User-Agent": "Mozilla/5.0"}
