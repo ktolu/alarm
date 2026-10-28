@@ -176,3 +176,4 @@ for c in ah:
     tg(f"PAHALI AZINLIK {c}: {bh[c]['ex']} alış {bh[c]['price']:.6g}, diğerlerinin ortası {bh[c]['ref']:.6g} (%{sp:.1f}).")
     st[c + ":high"] = dict(t=time.time(), sp=sp)
 json.dump(st, open("state.json", "w"))
+tg(f"çalıştı {time.strftime('%H:%M')} UTC, aday {len(rows)}")
