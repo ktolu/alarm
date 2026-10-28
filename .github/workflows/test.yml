@@ -1,0 +1,9 @@
+name: test
+on:
+  schedule:
+    - cron: "* * * * *"
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "çalıştı"
