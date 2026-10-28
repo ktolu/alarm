@@ -104,8 +104,12 @@ def gate_wd(c):
     except Exception: return "?"
 
 def tg(msg):
-    requests.post(f"https://api.telegram.org/bot{os.environ['TG_TOKEN']}/sendMessage",
-                  data={"chat_id": os.environ["TG_CHAT"], "text": msg[:3900]}, timeout=15)
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{os.environ['TG_TOKEN']}/sendMessage",
+                      data={"chat_id": os.environ["TG_CHAT"], "text": msg[:3900]}, timeout=15)
+        print(f"TG yanıt: {r.status_code} {r.text[:200]}")
+    except Exception as e:
+        print(f"TG hata: {e}")
 
 def quiet(st, key, sp):
     last = st.get(key)
@@ -172,4 +176,6 @@ for c in ah:
     if quiet(st, c + ":high", sp): continue
     tg(f"PAHALI AZINLIK {c}: {bh[c]['ex']} alış {bh[c]['price']:.6g}, diğerlerinin ortası {bh[c]['ref']:.6g} (%{sp:.1f}).")
     st[c + ":high"] = dict(t=time.time(), sp=sp)
+
 json.dump(st, open("state.json", "w"))
+tg(f"çalıştı {time.strftime('%H:%M')} UTC, aday {len(rows)}")
