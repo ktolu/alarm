@@ -32,8 +32,6 @@ SRC = {
              lambda d: {x["currency_pair"][:-5]: (fl(x["highest_bid"]), fl(x["lowest_ask"])) for x in d if x["currency_pair"].endswith("_USDT")}),
     "Bitget": ("https://api.bitget.com/api/v2/spot/market/tickers",
                lambda d: {x["symbol"][:-4]: (fl(x["bidPr"]), fl(x["askPr"])) for x in d["data"] if x["symbol"].endswith("USDT")}),
-    "HTX": ("https://api.huobi.pro/market/tickers",
-            lambda d: {x["symbol"][:-4].upper(): (fl(x.get("bid")), fl(x.get("ask"))) for x in d["data"] if x["symbol"].endswith("usdt")}),
     "CryptoCom": ("https://api.crypto.com/exchange/v1/public/get-tickers",
                   lambda d: {x["i"][:-5]: (fl(x.get("b")), fl(x.get("k"))) for x in d["result"]["data"] if x["i"].endswith("_USDT")}),
     "Kraken": ("https://api.kraken.com/0/public/Ticker", kr),
@@ -49,7 +47,6 @@ BOOK = {
     "Bybit": lambda c: (lambda r: (r["a"], r["b"]))(get(f"https://api.bybit.com/v5/market/orderbook?category=spot&symbol={c}USDT&limit=50")["result"]),
     "Gate": lambda c: ab(get(f"{GA}/spot/order_book?currency_pair={c}_USDT&limit=50")),
     "Bitget": lambda c: ab(get(f"https://api.bitget.com/api/v2/spot/market/orderbook?symbol={c}USDT&type=step0&limit=50")["data"]),
-    "HTX": lambda c: ab(get(f"https://api.huobi.pro/market/depth?symbol={c.lower()}usdt&type=step0&depth=20")["tick"]),
     "CryptoCom": lambda c: ab(get(f"https://api.crypto.com/exchange/v1/public/get-book?instrument_name={c}_USDT&depth=50")["result"]["data"][0]),
     "Kraken": lambda c: ab(list(get(f"https://api.kraken.com/0/public/Depth?pair={RK.get(c, c)}USDT&count=50")["result"].values())[0]),
 }
