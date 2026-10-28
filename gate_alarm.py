@@ -1,7 +1,8 @@
 import os, json, time, statistics, requests
 
-T, MAX_SP, SIZE, GAP, QUIET, MIN_EX = 7.0, 40.0, 50.0, 30, 6 * 3600, 5
-SHOW_PAHALI = False   # True yaparsan "pahalı azınlık" bilgi alarmı da gelir
+T, MAX_SP, SIZE, GAP, QUIET, MIN_EX = 5.0, 40.0, 100.0, 30, 6 * 3600, 5
+NET_MIN, FEE, MAX_ROWS = 3.0, 0.001, 15
+SHOW_PAHALI = False
 UA = {"User-Agent": "Mozilla/5.0"}
 GA = "https://api.gateio.ws/api/v4"
 RK = {"BTC": "XBT", "DOGE": "XDG"}
@@ -38,17 +39,19 @@ SRC = {
     "Kraken": ("https://api.kraken.com/0/public/Ticker", kr),
 }
 
+def ab(d): return d["asks"], d["bids"]
+
 BOOK = {
-    "MEXC": lambda c: get(f"https://api.mexc.com/api/v3/depth?symbol={c}USDT&limit=20")["asks"],
-    "Binance": lambda c: get(f"https://data-api.binance.vision/api/v3/depth?symbol={c}USDT&limit=20")["asks"],
-    "OKX": lambda c: get(f"https://www.okx.com/api/v5/market/books?instId={c}-USDT&sz=20")["data"][0]["asks"],
-    "KuCoin": lambda c: get(f"https://api.kucoin.com/api/v1/market/orderbook/level2_20?symbol={c}-USDT")["data"]["asks"],
-    "Bybit": lambda c: get(f"https://api.bybit.com/v5/market/orderbook?category=spot&symbol={c}USDT&limit=25")["result"]["a"],
-    "Gate": lambda c: get(f"{GA}/spot/order_book?currency_pair={c}_USDT&limit=30")["asks"],
-    "Bitget": lambda c: get(f"https://api.bitget.com/api/v2/spot/market/orderbook?symbol={c}USDT&type=step0&limit=20")["data"]["asks"],
-    "HTX": lambda c: get(f"https://api.huobi.pro/market/depth?symbol={c.lower()}usdt&type=step0&depth=20")["tick"]["asks"],
-    "CryptoCom": lambda c: get(f"https://api.crypto.com/exchange/v1/public/get-book?instrument_name={c}_USDT&depth=20")["result"]["data"][0]["asks"],
-    "Kraken": lambda c: list(get(f"https://api.kraken.com/0/public/Depth?pair={RK.get(c, c)}USDT&count=20")["result"].values())[0]["asks"],
+    "MEXC": lambda c: ab(get(f"https://api.mexc.com/api/v3/depth?symbol={c}USDT&limit=50")),
+    "Binance": lambda c: ab(get(f"https://data-api.binance.vision/api/v3/depth?symbol={c}USDT&limit=50")),
+    "OKX": lambda c: ab(get(f"https://www.okx.com/api/v5/market/books?instId={c}-USDT&sz=50")["data"][0]),
+    "KuCoin": lambda c: ab(get(f"https://api.kucoin.com/api/v1/market/orderbook/level2_100?symbol={c}-USDT")["data"]),
+    "Bybit": lambda c: (lambda r: (r["a"], r["b"]))(get(f"https://api.bybit.com/v5/market/orderbook?category=spot&symbol={c}USDT&limit=50")["result"]),
+    "Gate": lambda c: ab(get(f"{GA}/spot/order_book?currency_pair={c}_USDT&limit=50")),
+    "Bitget": lambda c: ab(get(f"https://api.bitget.com/api/v2/spot/market/orderbook?symbol={c}USDT&type=step0&limit=50")["data"]),
+    "HTX": lambda c: ab(get(f"https://api.huobi.pro/market/depth?symbol={c.lower()}usdt&type=step0&depth=20")["tick"]),
+    "CryptoCom": lambda c: ab(get(f"https://api.crypto.com/exchange/v1/public/get-book?instrument_name={c}_USDT&depth=50")["result"]["data"][0]),
+    "Kraken": lambda c: ab(list(get(f"https://api.kraken.com/0/public/Depth?pair={RK.get(c, c)}USDT&count=50")["result"].values())[0]),
 }
 
 def snap():
@@ -68,22 +71,33 @@ def snap():
         hi = [x for x in q if x[1] >= med * (1 + T / 100)]
         if 1 <= len(lo) <= 2:
             n0, b0, a0 = min(lo, key=lambda x: x[2])
-            ref = statistics.median([b for n, b, a in q if n not in {x[0] for x in lo}])
-            if T <= (ref / a0 - 1) * 100 <= MAX_SP:
-                low[c] = dict(ex=n0, ref=ref, k=len(q))
+            lon = {x[0] for x in lo}
+            ref = statistics.median([b for n, b, a in q if n not in lon])
+            sp = (ref / a0 - 1) * 100
+            if T <= sp <= MAX_SP:
+                low[c] = dict(ex=n0, sp=sp, k=len(q), others=[n for n, b, a in q if n not in lon])
         if SHOW_PAHALI and 1 <= len(hi) <= 2:
             n0, b0, a0 = max(hi, key=lambda x: x[1])
-            ref = statistics.median([a for n, b, a in q if n not in {x[0] for x in hi}])
+            hin = {x[0] for x in hi}
+            ref = statistics.median([a for n, b, a in q if n not in hin])
             if T <= (b0 / ref - 1) * 100 <= MAX_SP:
                 high[c] = dict(ex=n0, price=b0, ref=ref, k=len(q))
     return low, high
 
-def fill(ex, c):
+def buy_fill(asks):
     spent = qty = 0.0
-    for lv in BOOK[ex](c):
+    for lv in sorted(asks, key=lambda x: float(x[0])):
         p, q = float(lv[0]), float(lv[1]); t = min(q, (SIZE - spent) / p)
         spent += t * p; qty += t
-        if spent >= SIZE - 1e-9: return spent / qty
+        if spent >= SIZE - 1e-9: return spent / qty, qty
+    return None
+
+def sell_fill(bids, qty):
+    got, left = 0.0, qty
+    for lv in sorted(bids, key=lambda x: -float(x[0])):
+        p, q = float(lv[0]), float(lv[1]); t = min(q, left)
+        got += t * p; left -= t
+        if left <= qty * 1e-9: return got / qty
     return None
 
 def gate_wd(c):
@@ -94,7 +108,7 @@ def gate_wd(c):
 
 def tg(msg):
     requests.post(f"https://api.telegram.org/bot{os.environ['TG_TOKEN']}/sendMessage",
-                  data={"chat_id": os.environ["TG_CHAT"], "text": msg}, timeout=15)
+                  data={"chat_id": os.environ["TG_CHAT"], "text": msg[:3900]}, timeout=15)
 
 def quiet(st, key, sp):
     last = st.get(key)
@@ -106,25 +120,59 @@ al, ah = snap()
 time.sleep(GAP)
 bl, bh = snap()
 
-for c in al:
+rows = []
+for c in sorted(al, key=lambda x: -al[x]["sp"]):
+    if len(rows) >= MAX_ROWS: break
     if c not in bl or bl[c]["ex"] != al[c]["ex"]: continue
     ex = bl[c]["ex"]
-    try: avg = fill(ex, c)
-    except Exception: continue
-    if not avg: continue
-    sp = (min(al[c]["ref"], bl[c]["ref"]) / avg - 1) * 100
-    if sp < T or quiet(st, c + ":low", sp): continue
-    extra = f"\nGate çekme: {gate_wd(c)}" if ex == "Gate" else ""
-    tg(f"AL ADAYI {c}: {ex}'te {avg:.6g} USDT (50$ dolum)\n"
-       f"Diğer borsaların ortası {bl[c]['ref']:.6g} (%{sp:.1f} fark, {bl[c]['k']} borsa){extra}\n"
-       f"Aynı isimli farklı token olmadığını ve {ex}'te alım yapabildiğini kontrol et.")
-    st[c + ":low"] = dict(t=time.time(), sp=sp)
+    row = dict(c=c, ex=ex, ok=False, net=None, why="")
+    rows.append(row)
+    try:
+        asks, _ = BOOK[ex](c)
+        r = buy_fill(asks)
+    except Exception:
+        row["why"] = "kitap alınamadı"; continue
+    if not r:
+        row["why"] = f"{ex} kitabı {SIZE:.0f}$'ı karşılamıyor"; continue
+    avg, qty = r
+    row["avg"] = avg
+    row["slip"] = (avg / min(float(x[0]) for x in asks) - 1) * 100
+    sells = []
+    for n in bl[c]["others"]:
+        try:
+            s = sell_fill(BOOK[n](c)[1], qty)
+            if s: sells.append(s)
+        except Exception: pass
+    if len(sells) < 2:
+        row["why"] = f"satış kitabı yetersiz ({len(sells)} borsa)"; continue
+    ref = statistics.median(sells)
+    row["ref"], row["n"] = ref, len(sells)
+    row["net"] = (ref * (1 - FEE) / (avg * (1 + FEE)) - 1) * 100
+    row["ok"] = row["net"] >= NET_MIN
+    if not row["ok"]: row["why"] = "net düşük"
+
+def key_sp(r): return r["net"] if r["net"] is not None else 0.0
+
+if any(not quiet(st, r["c"] + ":low", key_sp(r)) for r in rows):
+    rows.sort(key=lambda r: (not r["ok"], -key_sp(r)))
+    lines = [f"Aday {len(rows)}, filtreyi geçen {sum(r['ok'] for r in rows)} ({SIZE:.0f}$ işlem)"]
+    for r in rows:
+        if r["net"] is None:
+            lines.append(f"▫️ {r['c']} ({r['ex']}): {r['why']}")
+        else:
+            extra = f" | Gate çekme: {gate_wd(r['c'])}" if r["ok"] and r["ex"] == "Gate" else ""
+            lines.append(f"{'✅' if r['ok'] else '▫️'} {r['c']} {r['ex']}: alış {r['avg']:.6g} (kayma %{r['slip']:.1f}), "
+                         f"satış ort. {r['ref']:.6g} ({r['n']} borsa), net %{r['net']:.1f}"
+                         + (f" [{r['why']}]" if r["why"] else "") + extra)
+    lines.append("Aynı isimli farklı token olmadığını ve ucuz borsada alım yapabildiğini kontrol et.")
+    tg("\n".join(lines))
+    for r in rows:
+        st[r["c"] + ":low"] = dict(t=time.time(), sp=key_sp(r))
 
 for c in ah:
     if c not in bh or bh[c]["ex"] != ah[c]["ex"]: continue
     sp = (bh[c]["price"] / bh[c]["ref"] - 1) * 100
     if quiet(st, c + ":high", sp): continue
-    tg(f"PAHALI AZINLIK {c}: {bh[c]['ex']} alış {bh[c]['price']:.6g}, diğerlerinin ortası {bh[c]['ref']:.6g} (%{sp:.1f}).\n"
-       f"Elinde varsa satış fırsatı. Almak için sinyal değil, yakınsama düşüşle olabilir.")
+    tg(f"PAHALI AZINLIK {c}: {bh[c]['ex']} alış {bh[c]['price']:.6g}, diğerlerinin ortası {bh[c]['ref']:.6g} (%{sp:.1f}).")
     st[c + ":high"] = dict(t=time.time(), sp=sp)
 json.dump(st, open("state.json", "w"))
